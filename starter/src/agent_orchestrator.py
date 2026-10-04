@@ -639,6 +639,8 @@ def build_orchestrator_agent(
 
    ROUTING RULES (follow in order):
    1. ALWAYS call initialize_session first, for every request, with no exceptions.
+      Call initialize_session ALONE and wait for its result before calling any other
+      tool. Never call tools in parallel.
    2. Order status, return or refund requests about the customer's own order:
       call route_to_inventory_agent, THEN route_to_refund_agent.
    3. Questions about what a policy says (return windows, shipping rates, warranty
