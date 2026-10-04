@@ -580,23 +580,6 @@ def build_orchestrator_agent(
     Build the Orchestrator Agent that routes requests and manages WorkflowState.
     """
 
-    # TODO: Create a BedrockModel using the ORCHESTRATOR model
-    pass
-
-    # TODO: System prompt for the Orchestrator
-    # For arithmetic, skip Inventory, Policy and Refund, but still call
-    # CommunicationAgent last. Round currency only after the full calculation.
-    pass
-
-    # Each routing tool follows the same pattern:
-    #   1. read the current WorkflowState  (_read_workflow_state)
-    #   2. invoke the worker agent
-    #   3. write its result back with optimistic locking
-    #      (_update_workflow_state(session_id, {'<column>': text}, expected_version))
-    # The terminal trace UI can show each step: call trace.step_start('inventory_agent')
-    # before the worker runs and trace.step_done('inventory_agent', old_version) after.
-
-    # TODO: Implement route_to_inventory_agent
     @tool
     def route_to_inventory_agent(session_id: str, customer_id: str, request: str) -> str:
         """
@@ -611,9 +594,19 @@ def build_orchestrator_agent(
         Returns:
             Inventory facts retrieved by the InventoryAgent
         """
-        pass
+        state = _read_workflow_state(session_id)
+        if not state:
+            return "Error: session not initialized. Call initialize_session first."
+        old_version = int(state['version'])
 
-    # TODO: Implement route_to_policy_agent
+        trace.step_start('inventory_agent')
+        result = str(inventory_agent(
+            f"[Session ID: {session_id}] [Customer ID: {customer_id}] {request}"
+        ))
+        _update_workflow_state(session_id, {'inventory_agent': result}, old_version)
+        trace.step_done('inventory_agent', old_version)
+        return result
+
     @tool
     def route_to_policy_agent(session_id: str, request: str) -> str:
         """
@@ -627,9 +620,17 @@ def build_orchestrator_agent(
         Returns:
             Policy information retrieved and synthesized by PolicyAgent
         """
-        pass
+        state = _read_workflow_state(session_id)
+        if not state:
+            return "Error: session not initialized. Call initialize_session first."
+        old_version = int(state['version'])
 
-    # TODO: Implement route_to_refund_agent
+        trace.step_start('policy_agent')
+        result = str(policy_agent(request))
+        _update_workflow_state(session_id, {'policy_agent': result}, old_version)
+        trace.step_done('policy_agent', old_version)
+        return result
+
     @tool
     def route_to_refund_agent(session_id: str, customer_id: str, request: str) -> str:
         """
@@ -644,12 +645,22 @@ def build_orchestrator_agent(
         Returns:
             Refund decision from the RefundAgent
         """
-        pass
+        state = _read_workflow_state(session_id)
+        if not state:
+            return "Error: session not initialized. Call initialize_session first."
+        old_version = int(state['version'])
 
-    # TODO: Implement route_to_communication_agent
+        trace.step_start('refund_agent')
+        result = str(refund_agent(
+            f"[Session ID: {session_id}] [Customer ID: {customer_id}] {request}"
+        ))
+        _update_workflow_state(session_id, {'refund_agent': result}, old_version)
+        trace.step_done('refund_agent', old_version)
+        return result
+
     @tool
     def route_to_communication_agent(session_id: str, customer_id: str,
-                                     original_request: str) -> str:
+                                    original_request: str) -> str:
         """
         Route to the Communication Agent to compose the final customer response.
         Call this LAST - after all relevant worker agents have run.
@@ -662,9 +673,20 @@ def build_orchestrator_agent(
         Returns:
             Final customer-facing response drafted by CommunicationAgent
         """
-        pass
+        state = _read_workflow_state(session_id)
+        if not state:
+            return "Error: session not initialized. Call initialize_session first."
+        old_version = int(state['version'])
 
-    # TODO: Implement initialize_session
+        trace.step_start('communication_agent')
+        result = str(communication_agent(
+            f"[Session ID: {session_id}] [Customer ID: {customer_id}] "
+            f"Customer's original request: {original_request}"
+        ))
+        _update_workflow_state(session_id, {'communication_agent': result}, old_version)
+        trace.step_done('communication_agent', old_version)
+        return result
+
     @tool
     def initialize_session(session_id: str, customer_id: str) -> str:
         """
@@ -678,10 +700,13 @@ def build_orchestrator_agent(
         Returns:
             Confirmation that the session was initialized
         """
-        pass
-
-    # TODO: Instantiate and return the OrchestratorAgent
-    pass
+        try:
+            _create_workflow_state(session_id, customer_id)
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                return f"Session {session_id} was already initialized."
+            raise
+        return f"Session {session_id} initialized for customer {customer_id}."
 
 
 # ═══════════════════════════════════════════════════════
