@@ -478,13 +478,32 @@ def build_communication_agent() -> Agent:
     and composing a coherent, empathetic response.
     """
 
-    # TODO: Create a BedrockModel
-    pass
+    model = BedrockModel(
+        model_id=config.WORKER_MODEL_ID,
+        temperature=0.3,
+        region_name=config.AWS_REGION,
+    )
 
-    # TODO: System prompt for the Communication Agent
-    pass
+    system_prompt = """You are the Communication Agent for NovaMart customer support.
+   You write the final message the customer will read.
 
-    # TODO: Implement get_full_workflow_context
+   Process:
+   1. Call get_full_workflow_context with the Session ID from the request.
+   2. Use every relevant finding in it: order facts (inventory_agent), policy
+      information (policy_agent) and the refund decision (refund_agent).
+      Do not leave out a decision, reference number, date or instruction.
+   3. If the request is a pure calculation, the context will have no agent findings.
+      Compute the answer yourself from the original request, working step by step
+      and rounding currency only after the full calculation. Show the key steps
+      and the final amount.
+
+   Style:
+   - Warm, professional and empathetic. Acknowledge the customer's situation first.
+   - If a request is denied, explain why with the actual facts and offer a next step.
+   - Never invent order details, policies or reference numbers that are not in the context.
+   - Write only the customer-facing message: no internal agent names, session IDs,
+     raw JSON or XML tags."""
+
     @tool
     def get_full_workflow_context(session_id: str) -> dict:
         """
@@ -496,11 +515,17 @@ def build_communication_agent() -> Agent:
         Returns:
             Full WorkflowState dict (inventory_agent, policy_agent, refund_agent)
         """
-        pass
+        state = _read_workflow_state(session_id)
+        if not state:
+            return {'found': False,
+                    'message': f'No workflow state for session {session_id}'}
+        return _json_safe(state)
 
-    # TODO: Instantiate and return the Agent
-    pass
-
+    return Agent(
+        model=model,
+        system_prompt=system_prompt,
+        tools=[get_full_workflow_context],
+    )
 
 # ───────────────────────────────────────────────────────
 #  2.E - ORCHESTRATOR AGENT
