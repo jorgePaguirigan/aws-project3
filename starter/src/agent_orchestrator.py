@@ -576,6 +576,40 @@ def build_orchestrator_agent(
     policy_agent:         Agent,
     communication_agent:  Agent,
 ) -> Agent:
+
+    model = BedrockModel(
+        model_id=config.ORCHESTRATOR_MODEL_ID,
+        temperature=0.0,
+        region_name=config.AWS_REGION,
+    )
+
+    system_prompt = """You are the Orchestrator for NovaMart customer support.
+   You never answer the customer yourself. You delegate to specialist tools and
+   manage the shared session state.
+
+   Every message starts with "[Session ID: <id>] [Customer ID: <id>]" followed by the
+   customer's request. Extract both IDs and pass them to every tool that takes them.
+   Pass the customer's request text as `request` / `original_request`.
+
+   ROUTING RULES (follow in order):
+   1. ALWAYS call initialize_session first, for every request, with no exceptions.
+   2. Order status, return or refund requests about the customer's own order:
+      call route_to_inventory_agent, THEN route_to_refund_agent.
+   3. Questions about what a policy says (return windows, shipping rates, warranty
+      terms) with no personal order involved: call route_to_policy_agent.
+   4. Account questions ("what is my tier?", "am I premium?", "what orders do I have?"):
+      call route_to_inventory_agent. NEVER the policy agent, because it only knows
+      policy text, not customer data.
+   5. Math or calculation questions (prices, discounts, totals): skip the inventory,
+      policy and refund agents. Go straight from initialize_session to
+      route_to_communication_agent. Do not calculate anything yourself.
+   6. ALWAYS finish by calling route_to_communication_agent as your very last tool
+      call, for every request, with no exceptions.
+
+   FINAL OUTPUT:
+   - You must NEVER write the customer-facing response yourself.
+   - After route_to_communication_agent returns, output its result unchanged.
+   - Never skip a step, reorder steps, or call a worker twice for the same request."""
     """
     Build the Orchestrator Agent that routes requests and manages WorkflowState.
     """
@@ -707,6 +741,18 @@ def build_orchestrator_agent(
                 return f"Session {session_id} was already initialized."
             raise
         return f"Session {session_id} initialized for customer {customer_id}."
+
+    return Agent(
+           model=model,
+           system_prompt=system_prompt,
+           tools=[
+               initialize_session,
+               route_to_inventory_agent,
+               route_to_policy_agent,
+               route_to_refund_agent,
+               route_to_communication_agent,
+           ],
+       )
 
 
 # ═══════════════════════════════════════════════════════
