@@ -249,7 +249,18 @@ def build_inventory_agent() -> Agent:
     # tool takes customer_id as well as order_id.
     @tool
     def check_order_status(customer_id: str, order_id: str) -> dict:
-        """...original docstring..."""
+        """
+           Look up one order in DynamoDB and report its status, product, dates
+           and amount. Reports facts only - it does NOT decide return eligibility.
+
+           Args:
+               customer_id: The customer's unique identifier (e.g. CUST-001)
+               order_id: The order identifier (e.g. ORD-27176)
+
+           Returns:
+               Order record (order_id, status, product_name, order_date, price, ...)
+               or a not-found message
+        """
         table = dynamodb.Table(config.ORDERS_TABLE)
         resp = table.get_item(Key={'customer_id': customer_id, 'order_id': order_id})
         item = resp.get('Item')
@@ -261,7 +272,16 @@ def build_inventory_agent() -> Agent:
 
     @tool
     def get_customer_tier(customer_id: str) -> dict:
-           """...original docstring..."""
+           """
+            Retrieve a customer's tier (Standard or Premium) from DynamoDB.
+            Standard customers have a 30-day return window; Premium customers have 60 days.
+
+            Args:
+                customer_id: The customer's unique identifier
+
+            Returns:
+                Customer profile including tier and account details
+            """
            table = dynamodb.Table(config.CUSTOMERS_TABLE)
            resp = table.get_item(Key={'customer_id': customer_id})
            item = resp.get('Item')
@@ -271,7 +291,15 @@ def build_inventory_agent() -> Agent:
     
     @tool
     def list_customer_orders(customer_id: str) -> dict:
-           """...original docstring..."""
+           """
+            Retrieve all orders for a customer from DynamoDB.
+
+            Args:
+                customer_id: The customer's unique identifier
+
+            Returns:
+                List of all orders with order_id, status, order_date, and amount
+            """
            table = dynamodb.Table(config.ORDERS_TABLE)
            resp = table.query(KeyConditionExpression=Key('customer_id').eq(customer_id))
            items = resp.get('Items', [])
@@ -316,7 +344,15 @@ def build_refund_agent() -> Agent:
 
     @tool
     def get_inventory_context(session_id: str) -> dict:
-        """...original docstring..."""
+        """
+        Read the WorkflowState to access facts gathered by the InventoryAgent.
+
+        Args:
+            session_id: The current session identifier
+
+        Returns:
+            The inventory_agent field from WorkflowState, or empty dict if not yet set
+        """
         state = _read_workflow_state(session_id)
         if not state:
             return {}
@@ -324,7 +360,17 @@ def build_refund_agent() -> Agent:
 
     @tool
     def initiate_refund(customer_id: str, order_id: str, reason: str) -> dict:
-        """...original docstring..."""
+        """
+        Initiate a return by updating the order record in DynamoDB.
+
+        Args:
+            customer_id: The customer's unique identifier
+            order_id: The order to return
+            reason: Customer-provided reason for the return
+
+        Returns:
+            Confirmation dict with return_reference number and instructions
+        """
         return_reference = f"RET-{uuid.uuid4().hex[:8].upper()}"
         table = dynamodb.Table(config.ORDERS_TABLE)
         try:
