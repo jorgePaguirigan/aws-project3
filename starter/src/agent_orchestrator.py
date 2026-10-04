@@ -216,6 +216,10 @@ def _update_workflow_state(session_id: str, updates: dict,
 #  2.A - INVENTORY AGENT
 # ───────────────────────────────────────────────────────
 
+def _json_safe(obj):
+       """Convert DynamoDB Decimals so tool results serialize cleanly."""
+       return json.loads(json.dumps(obj, default=str))
+
 def build_inventory_agent() -> Agent:
     """
     Build the Inventory Agent.
@@ -225,10 +229,23 @@ def build_inventory_agent() -> Agent:
     """
 
     # TODO: Create a BedrockModel using the WORKER model
-    pass
+    def build_inventory_agent() -> Agent:
+       model = BedrockModel(
+           model_id=config.WORKER_MODEL_ID,
+           temperature=0.1,
+           region_name=config.AWS_REGION,
+       )
 
     # TODO: System prompt for the Inventory Agent
-    pass
+    system_prompt = """You are the Inventory Agent for NovaMart customer support.
+    Your only job is to gather facts from the order and customer databases.
+
+    Rules:
+    - Use your tools to look up data. Never guess or invent order details.
+    - Report facts exactly: order ID, status, product, order date, price, customer tier.
+    - Do NOT decide return or refund eligibility, and do NOT interpret policy.
+    - If a record is not found, say so plainly.
+    - For return requests, always include the customer's tier and the order's status and order date, so downstream agents can decide."""
 
     # TODO: Implement check_order_status
     # NOTE: the Orders table has a COMPOSITE key (customer_id = partition key,
@@ -236,51 +253,42 @@ def build_inventory_agent() -> Agent:
     # tool takes customer_id as well as order_id.
     @tool
     def check_order_status(customer_id: str, order_id: str) -> dict:
-        """
-        Look up one order in DynamoDB and report its status, product, dates
-        and amount. Reports facts only - it does NOT decide return eligibility.
+        """...original docstring..."""
+        table = dynamodb.Table(config.ORDERS_TABLE)
+        resp = table.get_item(Key={'customer_id': customer_id, 'order_id': order_id})
+        item = resp.get('Item')
+        if not item:
+            return {'found': False,
+                    'message': f'Order {order_id} not found for customer {customer_id}'}
+        return _json_safe(item)
 
-        Args:
-            customer_id: The customer's unique identifier (e.g. CUST-001)
-            order_id: The order identifier (e.g. ORD-27176)
-
-        Returns:
-            Order record (order_id, status, product_name, order_date, price, ...)
-            or a not-found message
-        """
-        pass
 
     # TODO: Implement get_customer_tier
     @tool
     def get_customer_tier(customer_id: str) -> dict:
-        """
-        Retrieve a customer's tier (Standard or Premium) from DynamoDB.
-        Standard customers have a 30-day return window; Premium customers have 60 days.
-
-        Args:
-            customer_id: The customer's unique identifier
-
-        Returns:
-            Customer profile including tier and account details
-        """
-        pass
-
+           """...original docstring..."""
+           table = dynamodb.Table(config.CUSTOMERS_TABLE)
+           resp = table.get_item(Key={'customer_id': customer_id})
+           item = resp.get('Item')
+           if not item:
+               return {'found': False, 'message': f'Customer {customer_id} not found'}
+           return _json_safe(item)
+    
     # TODO: Implement list_customer_orders
     @tool
     def list_customer_orders(customer_id: str) -> dict:
-        """
-        Retrieve all orders for a customer from DynamoDB.
-
-        Args:
-            customer_id: The customer's unique identifier
-
-        Returns:
-            List of all orders with order_id, status, order_date, and amount
-        """
-        pass
+           """...original docstring..."""
+           table = dynamodb.Table(config.ORDERS_TABLE)
+           resp = table.query(KeyConditionExpression=Key('customer_id').eq(customer_id))
+           items = resp.get('Items', [])
+           return _json_safe({'customer_id': customer_id, 'count': len(items), 'orders': items})
 
     # TODO: Instantiate and return the Agent
-    pass
+    return Agent(
+           model=model,
+           system_prompt=system_prompt,
+           tools=[check_order_status, get_customer_tier, list_customer_orders],
+       )
 
 
 # ───────────────────────────────────────────────────────
