@@ -228,15 +228,12 @@ def build_inventory_agent() -> Agent:
     only retrieves data for the OrchestratorAgent to share with downstream agents.
     """
 
-    # TODO: Create a BedrockModel using the WORKER model
-    def build_inventory_agent() -> Agent:
-       model = BedrockModel(
-           model_id=config.WORKER_MODEL_ID,
-           temperature=0.1,
-           region_name=config.AWS_REGION,
-       )
+    model = BedrockModel(
+        model_id=config.WORKER_MODEL_ID,
+        temperature=0.1,
+        region_name=config.AWS_REGION,
+    )
 
-    # TODO: System prompt for the Inventory Agent
     system_prompt = """You are the Inventory Agent for NovaMart customer support.
     Your only job is to gather facts from the order and customer databases.
 
@@ -247,7 +244,6 @@ def build_inventory_agent() -> Agent:
     - If a record is not found, say so plainly.
     - For return requests, always include the customer's tier and the order's status and order date, so downstream agents can decide."""
 
-    # TODO: Implement check_order_status
     # NOTE: the Orders table has a COMPOSITE key (customer_id = partition key,
     # order_id = sort key), so a get_item needs BOTH values. That is why this
     # tool takes customer_id as well as order_id.
@@ -263,7 +259,6 @@ def build_inventory_agent() -> Agent:
         return _json_safe(item)
 
 
-    # TODO: Implement get_customer_tier
     @tool
     def get_customer_tier(customer_id: str) -> dict:
            """...original docstring..."""
@@ -274,7 +269,6 @@ def build_inventory_agent() -> Agent:
                return {'found': False, 'message': f'Customer {customer_id} not found'}
            return _json_safe(item)
     
-    # TODO: Implement list_customer_orders
     @tool
     def list_customer_orders(customer_id: str) -> dict:
            """...original docstring..."""
@@ -283,7 +277,6 @@ def build_inventory_agent() -> Agent:
            items = resp.get('Items', [])
            return _json_safe({'customer_id': customer_id, 'count': len(items), 'orders': items})
 
-    # TODO: Instantiate and return the Agent
     return Agent(
            model=model,
            system_prompt=system_prompt,
@@ -296,51 +289,79 @@ def build_inventory_agent() -> Agent:
 # ───────────────────────────────────────────────────────
 
 def build_refund_agent() -> Agent:
-    """
-    Build the Refund Agent.
+    model = BedrockModel(
+        model_id=config.WORKER_MODEL_ID,
+        temperature=0.1,
+        region_name=config.AWS_REGION,
+    )
 
-    Makes return/refund eligibility decisions based on order facts from
-    WorkflowState and applies the correct policy window per customer tier.
-    """
+    today = time.strftime('%Y-%m-%d', time.gmtime())
+    system_prompt = f"""You are the Refund Agent for NovaMart customer support.
+    You decide return/refund eligibility. Today's date is {today} (UTC).
 
-    # TODO: Create a BedrockModel
-    pass
+    Process, in this order:
+    1. Call get_inventory_context with the Session ID from the request. Never decide without it.
+    2. If the context is empty or the order was not found, do not approve. Say what is missing.
+    3. Apply the return window by customer tier, counted in days from the order date to today:
+        - Standard: 30 days
+        - Premium: 60 days
+    4. Eligible only if the order status is 'delivered' AND the days elapsed are within the window.
+        Orders that are processing, shipped, or cancelled are NOT eligible.
+    5. If eligible, call initiate_refund with the customer_id, order_id and the customer's reason
+        (use "Customer requested return" if none was given). Report the return reference it returns.
+    6. If not eligible, do NOT call initiate_refund. State the reason with the numbers
+        (days elapsed, window, status).
 
-    # TODO: System prompt for the Refund Agent
-    pass
+    Always end with a clear decision: APPROVED or DENIED, plus the reasoning and facts used."""
 
-    # TODO: Implement get_inventory_context
     @tool
     def get_inventory_context(session_id: str) -> dict:
-        """
-        Read the WorkflowState to access facts gathered by the InventoryAgent.
+        """...original docstring..."""
+        state = _read_workflow_state(session_id)
+        if not state:
+            return {}
+        return _json_safe(state.get('inventory_agent', {}))
 
-        Args:
-            session_id: The current session identifier
-
-        Returns:
-            The inventory_agent field from WorkflowState, or empty dict if not yet set
-        """
-        pass
-
-    # TODO: Implement initiate_refund
     @tool
     def initiate_refund(customer_id: str, order_id: str, reason: str) -> dict:
-        """
-        Initiate a return by updating the order record in DynamoDB.
+        """...original docstring..."""
+        return_reference = f"RET-{uuid.uuid4().hex[:8].upper()}"
+        table = dynamodb.Table(config.ORDERS_TABLE)
+        try:
+            table.update_item(
+                Key={'customer_id': customer_id, 'order_id': order_id},
+                UpdateExpression=(
+                    "SET #s = :status, return_reason = :reason, "
+                    "return_reference = :ref, return_initiated_at = :ts"
+                ),
+                ConditionExpression='attribute_exists(order_id)',
+                ExpressionAttributeNames={'#s': 'status'},
+                ExpressionAttributeValues={
+                    ':status': 'return_initiated',
+                    ':reason': reason,
+                    ':ref': return_reference,
+                    ':ts': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                },
+            )
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                return {'success': False,
+                        'message': f'Order {order_id} not found for customer {customer_id}'}
+            raise
+        return {
+            'success': True,
+            'return_reference': return_reference,
+            'order_id': order_id,
+            'instructions': 'Pack the item in its original packaging and use the '
+                            'prepaid return label sent by email. Refund is issued '
+                            'after the item is received and inspected.',
+        }
 
-        Args:
-            customer_id: The customer's unique identifier
-            order_id: The order to return
-            reason: Customer-provided reason for the return
-
-        Returns:
-            Confirmation dict with return_reference number and instructions
-        """
-        pass
-
-    # TODO: Instantiate and return the Agent
-    pass
+    return Agent(
+        model=model,
+        system_prompt=system_prompt,
+        tools=[get_inventory_context, initiate_refund],
+    )
 
 
 # ───────────────────────────────────────────────────────
